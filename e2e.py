@@ -769,7 +769,10 @@ class Database:
         for row in counts:
             if len(row) >= 2:
                 self.con.plain(f"    {row[0]:<12} {row[1]}")
-        self.con.ok("Seed applied (john@doe.com has 4 unused tickets).")
+        self.con.ok(
+            "Seed applied (john@doe.com: 4 unused; "
+            "many.tickets@analog.local: 70 unused, 120 used, 10 refunded)."
+        )
 
     def reset(self) -> None:
         self.con.log("Removing test accounts and tokens (db/reset.sql)...")
@@ -780,7 +783,7 @@ class Database:
         rows = self.query(
             "SET NOCOUNT ON; "
             "SELECT u.Name, u.Email, "
-            "COALESCE(SUM(CASE WHEN t.IsUsed = 0 THEN 1 ELSE 0 END), 0) "
+            "COALESCE(SUM(CASE WHEN t.Status = 0 THEN 1 ELSE 0 END), 0) "
             "FROM dbo.Users u "
             "LEFT JOIN dbo.Tickets t ON t.[Owner_Id] = u.Id "
             "GROUP BY u.Id, u.Name, u.Email ORDER BY u.Name"

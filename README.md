@@ -124,9 +124,15 @@ All commands accept `--help`. Device-related commands accept
 4. Enter a name, pick a programme, and tap **Create account**. You land on
    **Tickets**.
 
-To test an existing account, use `john@doe.com` (`john@doe.com` has 4 unused
-seeded tickets). Open its **“Login to Analog”** email and launch the
-`/login/auth/<token>` link; `./e2e open-link` handles that too.
+To test an existing account, use `john@doe.com` (4 unused seeded tickets). Open
+its **“Login to Analog”** email and launch the `/login/auth/<token>` link;
+`./e2e open-link` handles that too.
+
+For a busy history, use `many.tickets@analog.local`: 200 tickets (70 unused, 120
+used across all six menu items and ~1.5 years, 10 refunded), 25 purchases
+covering MobilePay/Free/Voucher/PointOfSale, purchase + voucher + ticket-swipe
+receipts, and populated leaderboard statistics. Seeded accounts use password
+`1234` for the v1 API login endpoint; the app itself uses the magic link.
 
 The backend/email/registration path can be checked without the UI:
 

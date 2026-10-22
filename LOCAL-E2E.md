@@ -228,10 +228,22 @@ Android 9+ blocks cleartext HTTP by default. The development debug manifest
 - Programmes: `SWU` (Software Engineering), `DUMMY` (Dummy Programme)
 - `john@doe.com` — verified customer, 4 unused tickets
 - `dummy.seed.barista@analog.local` — barista, 2 unused tickets
+- `many.tickets@analog.local` — ticket-history fixture:
+  - 200 tickets: 70 unused, 120 used, 10 refunded
+  - used swipes spread across all six menu items and roughly 1.5 years,
+    including several today/this week/this month
+  - 25 purchases covering `MobilePayV2`, `Free`, `Voucher` and `PointOfSale`,
+    plus Cancelled/Expired/Refunded receipts
+  - one voucher receipt and two POS receipts
+  - Monthly/Semester/Total statistic rows for the leaderboard
 - Products: `Dummy Seed - 10 Coffee Clips`, `Dummy Seed - 5 Tea Clips`
+- Menu items: `Dummy Seed - Cappuccino`, `Latte`, `Tea`, `Espresso`,
+  `Hot Chocolate`, `Chai Latte`
 
-The seed is idempotent; `e2e reset` removes accounts matching `%@example.com`
-first. Use `e2e list-users` to inspect the whole local database.
+Seeded accounts use password `1234` for the v1 API login endpoint
+(`POST /api/v1/account/login`); the app itself uses the magic-link flow. The
+seed is idempotent; `e2e reset` removes accounts matching `%@example.com` first.
+Use `e2e list-users` to inspect the whole local database.
 
 ## Configuration
 
