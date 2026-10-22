@@ -1,0 +1,9 @@
+* text=auto eol=lf
+
+# Windows launchers need CRLF to be friendly to cmd.exe.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+# Keep the POSIX launcher executable and LF-only on every checkout.
+/e2e text eol=lf

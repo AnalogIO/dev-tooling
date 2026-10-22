@@ -1,0 +1,22 @@
+#!/usr/bin/env sh
+# Cross-platform launcher for e2e.py. macOS/Linux: ./e2e <command>
+set -eu
+
+ROOT=$(unset CDPATH; cd -- "$(dirname -- "$0")" && pwd)
+
+for candidate in python3 python; do
+  if command -v "$candidate" >/dev/null 2>&1; then
+    if "$candidate" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 9) else 1)' >/dev/null 2>&1; then
+      exec "$candidate" "$ROOT/e2e.py" "$@"
+    fi
+  fi
+done
+
+if command -v py >/dev/null 2>&1; then
+  if py -3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 9) else 1)' >/dev/null 2>&1; then
+    exec py -3 "$ROOT/e2e.py" "$@"
+  fi
+fi
+
+echo "error: Python 3.9+ is required. Install it from https://www.python.org/downloads/" >&2
+exit 1

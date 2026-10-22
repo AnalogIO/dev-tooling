@@ -1,0 +1,12 @@
+# Runtime state created by the local E2E tool.
+/.dev/
+/config.local.env
+
+# Python bytecode from running `e2e` or the unit tests.
+__pycache__/
+*.py[cod]
+
+# Source repositories cloned by `e2e setup`. Each one is its own Git repo,
+# so it must never be tracked here.
+/analog-core/
+/mobile_app/

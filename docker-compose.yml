@@ -1,0 +1,35 @@
+# Infrastructure for the local E2E environment. The backend itself runs on the
+# host so `dotnet build` + restart stays fast. Values are supplied by e2e.py
+# from config.env / the environment.
+# The Compose project name is the directory name (override with
+# COMPOSE_PROJECT_NAME if you keep multiple checkouts on one machine).
+services:
+  mssql:
+    image: ${MSSQL_IMAGE:-mcr.microsoft.com/mssql/server:2022-latest}
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: "Developer"
+      MSSQL_SA_PASSWORD: "${DB_PASSWORD:-Your_password123}"
+    ports:
+      - "${DB_BIND:-127.0.0.1}:${DB_PORT:-1433}:1433"
+    volumes:
+      - mssql-data:/var/opt/mssql
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$$MSSQL_SA_PASSWORD" -Q "SELECT 1" || exit 1
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    restart: unless-stopped
+
+  mailhog:
+    image: ${MAILHOG_IMAGE:-mailhog/mailhog:latest}
+    ports:
+      - "${MAILHOG_BIND:-127.0.0.1}:${MAILHOG_SMTP_PORT:-1025}:1025"
+      - "${MAILHOG_BIND:-127.0.0.1}:${MAILHOG_HTTP_PORT:-8025}:8025"
+    restart: unless-stopped
+
+volumes:
+  mssql-data:
