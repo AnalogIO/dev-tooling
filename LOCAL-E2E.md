@@ -138,10 +138,11 @@ Open:
 4. Enter a name, pick a programme, tap **Create account**. You land on
    **Tickets**.
 
-To test an existing seeded account, use `john@doe.com`. Open its **“Login to
-Analog”** email and launch the `/login/auth/<token>` link; the app signs in with
-the seeded tickets. `./e2e open-link` handles both kinds of email. If the inbox
-contains several emails, the newest wins; `./e2e reset` clears it.
+To test an existing seeded account, use `a@analog.local` (the busy account). Open
+its **“Login to Analog”** email and launch the `/login/auth/<token>` link; the
+app signs in with the seeded history. `./e2e open-link` handles both kinds of
+email. If the inbox contains several emails, the newest wins; `./e2e reset`
+clears it.
 
 ## Commands
 
@@ -160,7 +161,7 @@ contains several emails, the newest wins; `./e2e reset` clears it.
 | `e2e logs` | Tail `.dev/backend.log` |
 | `e2e list-users` | List users and unused ticket counts |
 | `e2e smoke` | Backend + email + registration smoke test |
-| `e2e seed` | Re-apply the dummy seed |
+| `e2e seed` | Re-apply the demo seed |
 | `e2e reset` | Remove `@example.com` accounts/tokens, re-seed, clear MailHog |
 | `e2e backend start\|stop\|restart` | Control just the backend |
 | `e2e deps` | Start MSSQL + MailHog only |
@@ -225,25 +226,58 @@ Android 9+ blocks cleartext HTTP by default. The development debug manifest
 
 ## Seeded data
 
-- Programmes: `SWU` (Software Engineering), `DUMMY` (Dummy Programme)
-- `john@doe.com` — verified customer, 4 unused tickets
-- `dummy.seed.barista@analog.local` — barista, 2 unused tickets
-- `many.tickets@analog.local` — ticket-history fixture:
-  - 200 tickets: 70 unused, 120 used, 10 refunded
-  - used swipes spread across all six menu items and roughly 1.5 years,
-    including several today/this week/this month
-  - 25 purchases covering `MobilePayV2`, `Free`, `Voucher` and `PointOfSale`,
-    plus Cancelled/Expired/Refunded receipts
-  - one voucher receipt and two POS receipts
-  - Monthly/Semester/Total statistic rows for the leaderboard
-- Products: `Dummy Seed - 10 Coffee Clips`, `Dummy Seed - 5 Tea Clips`
-- Menu items: `Dummy Seed - Cappuccino`, `Latte`, `Tea`, `Espresso`,
-  `Hot Chocolate`, `Chai Latte`
+Seeded accounts are `a@analog.local` … `z@analog.local`. All 26 are named after
+AnalogIO contributors; the ten highest coffee drinkers are drawn from the ten
+biggest contributors (Omid is #1). Every seeded account uses password `1234` for the v1 API login
+endpoint (`POST /api/v1/account/login`); the app uses the magic-link flow.
 
-Seeded accounts use password `1234` for the v1 API login endpoint
-(`POST /api/v1/account/login`); the app itself uses the magic-link flow. The
-seed is idempotent; `e2e reset` removes accounts matching `%@example.com` first.
-Use `e2e list-users` to inspect the whole local database.
+| Account | Person | Role | Notes |
+| --- | --- | --- | --- |
+| `a@analog.local` | Omid | customer | busy fixture: ~280 tickets, receipts, leaderboard #1 |
+| `b@analog.local` | Jonas | customer | |
+| `c@analog.local` | Frederik J. | customer | |
+| `d@analog.local` | Frederik M. | customer | |
+| `e@analog.local` | Thomas | customer | |
+| `f@analog.local` | Mikael | customer | |
+| `g@analog.local` | Frederik D. | customer | |
+| `h@analog.local` | Fischer | customer | |
+| `i@analog.local` | Andreas | customer | |
+| `j@analog.local` | Anders | customer | |
+| `k@analog.local` | Colin | customer | |
+| `l@analog.local` | Kasper | customer | |
+| `m@analog.local` | Lauritz | barista | |
+| `n@analog.local` | Andreas G. | barista | |
+| `o@analog.local` | Monir | barista | |
+| `p@analog.local` | Frederik P. | manager | |
+| `q@analog.local` | Jacob | board | |
+| `r@analog.local` | buschbirk | customer | |
+| `s@analog.local` | Simon | customer | |
+| `t@analog.local` | jstcz | customer | |
+| `u@analog.local` | Christoffer | customer | |
+| `v@analog.local` | Mathias | customer | |
+| `w@analog.local` | Daniel | customer | private: shows as "Anonymous" |
+| `x@analog.local` | Chrisser000 | customer | brand-new account |
+| `y@analog.local` | Sam | customer | pending verification |
+| `z@analog.local` | Hubert | customer | |
+
+- Programmes: `SWU`, `DATA`, `GBI`, `DDIT`, `DIM`, `GAMES`, `SD`, `CS`, `EXCH`
+  (plus inactive `MMD`).
+- Products: `Small`, `Large`, `Fancy`, `Filter`, `Tea`, `Iced`,
+  `Hot Chocolate`, `Single`, `Semester`, `Free`, `Barista`, `Board` (and the
+  archived `Christmas`).
+- About 1,650 tickets (~790 used, ~820 unused, 40 refunded), ~157 purchases
+  covering MobilePay/Free/Voucher/PointOfSale plus Cancelled/Expired/Refunded
+  receipts, and Monthly/Semester/Total statistics for the leaderboard.
+- Unredeemed voucher codes for the redeem screen: `SEED-GIFT-COFFEE`,
+  `SEED-GIFT-TEA`, `SEED-GIFT-ICED`, `SEED-GIFT-HOTCHOC`.
+- All dates are relative to seed time, so `e2e seed` refreshes the history.
+
+A few contributors have no public display name, so their GitHub handles are
+used (`buschbirk`, `jstcz`, `Chrisser000`); the rest are first names.
+
+The seed is idempotent and removes the old `john@doe.com` /
+`many.tickets@analog.local` fixtures. `e2e reset` also removes `%@example.com`
+accounts. Use `e2e list-users` to inspect the local database.
 
 ## Configuration
 
@@ -253,6 +287,7 @@ Defaults live in [`config.env`](config.env). Override per command:
 SIM_NAME="iPhone 17" ./e2e up
 API_PORT=5080 ./e2e up
 PLATFORM=android ./e2e up
+./e2e up --continue-on-health-error
 ```
 
 Or create `config.local.env` (git-ignored) with the same `KEY=VALUE` syntax for
@@ -261,6 +296,15 @@ persistent overrides. Precedence: **environment → `config.local.env` →
 
 If you change `API_PORT`, `API_BASE_URL` is derived automatically (leave it
 empty). For a physical phone, set `ANDROID_API_BASE_URL` explicitly.
+
+Readiness probes for MSSQL, MailHog and the backend are fatal by default. With
+`--continue-on-health-error` (or `CONTINUE_ON_HEALTH_ERROR=1`) a probe that times
+out only prints a warning; the backend process is kept alive and the remaining
+steps still run. The demo seed is skipped when MSSQL was never confirmed ready
+(run `e2e seed --continue-on-health-error` later if the probe is still
+unreliable). This is meant for container runtimes that make the probes
+unreliable (for example Docker emulated by podman), not for a stack that is
+genuinely broken.
 
 ## How it works
 
@@ -330,6 +374,10 @@ tool's own project and volumes.
 Run `e2e doctor` first.
 
 - **Docker not running** — start Docker Desktop/daemon before any command.
+- **Readiness probe fails (podman-emulated Docker)** — MSSQL, MailHog or the
+  backend can time out even though the stack works. Retry with
+  `./e2e up --continue-on-health-error` (or `CONTINUE_ON_HEALTH_ERROR=1`): the
+  probe is downgraded to a warning and the backend process is left running.
 - **Port conflict** — stop the other process or override `API_PORT`, `DB_PORT`,
   `MAILHOG_HTTP_PORT`, `MAILHOG_SMTP_PORT`. Set them consistently; `API_BASE_URL`
   is derived from `API_PORT` when empty.

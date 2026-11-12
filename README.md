@@ -95,7 +95,7 @@ Platform notes:
 | `./e2e logs` | Tail the backend log |
 | `./e2e list-users` | List users and unused ticket counts |
 | `./e2e smoke` | Login → email → registration smoke test (no UI) |
-| `./e2e seed` | Re-apply the dummy seed |
+| `./e2e seed` | Re-apply the demo seed |
 | `./e2e reset` | Remove `@example.com` test accounts, re-seed, clear MailHog |
 | `./e2e backend start\|stop\|restart` | Control just the backend |
 | `./e2e deps` | Start MSSQL + MailHog only |
@@ -124,15 +124,14 @@ All commands accept `--help`. Device-related commands accept
 4. Enter a name, pick a programme, and tap **Create account**. You land on
    **Tickets**.
 
-To test an existing account, use `john@doe.com` (4 unused seeded tickets). Open
-its **“Login to Analog”** email and launch the `/login/auth/<token>` link;
-`./e2e open-link` handles that too.
+To test an existing account, use `a@analog.local` (the busy account: ~280 tickets,
+receipts, and leaderboard history). Open its **“Login to Analog”** email and
+launch the `/login/auth/<token>` link; `./e2e open-link` handles that too.
 
-For a busy history, use `many.tickets@analog.local`: 200 tickets (70 unused, 120
-used across all six menu items and ~1.5 years, 10 refunded), 25 purchases
-covering MobilePay/Free/Voucher/PointOfSale, purchase + voucher + ticket-swipe
-receipts, and populated leaderboard statistics. Seeded accounts use password
-`1234` for the v1 API login endpoint; the app itself uses the magic link.
+Seeded accounts are `a@analog.local` … `z@analog.local`; every one is named after an
+AnalogIO contributor, and the ten busiest are drawn from the ten biggest
+contributors. Every seeded account uses password `1234` for the v1 API login
+endpoint; the app itself uses the magic link.
 
 The backend/email/registration path can be checked without the UI:
 
@@ -152,6 +151,7 @@ Defaults live in [`config.env`](config.env). Override them per command:
 API_PORT=5080 ./e2e up
 PLATFORM=android ./e2e up
 SIM_NAME="iPhone 17" ./e2e up
+./e2e up --continue-on-health-error
 ```
 
 Or create `config.local.env` (git-ignored) for persistent machine-specific
@@ -175,6 +175,7 @@ Useful settings:
 | `API_BIND` | `0.0.0.0` | Bind address; `0.0.0.0` lets a physical phone reach the API. |
 | `DB_PORT` | `1433` | Host port for MSSQL. Change it if it conflicts with a local SQL Server. |
 | `MAILHOG_HTTP_PORT` / `MAILHOG_SMTP_PORT` | `8025` / `1025` | MailHog ports. |
+| `CONTINUE_ON_HEALTH_ERROR` | `0` | Warn and continue when a readiness probe (MSSQL, MailHog, backend) fails; also `--continue-on-health-error`. |
 | `PLATFORM` | `auto` | `auto`, `ios`, `android`, or `none`. |
 | `SIM_NAME` / `SIM_UDID` | `iPhone 16 Pro` / empty | iOS simulator selection. |
 | `ANDROID_AVD` / `ANDROID_SERIAL` | empty | Android emulator/device selection. |
@@ -219,6 +220,12 @@ Run `./e2e doctor` first; it prints the tool versions and the same checks as
 `./e2e check`.
 
 - **Docker is not running** — start Docker Desktop/daemon, then retry.
+- **Health checks fail but the stack works (Docker emulated by podman)** — the
+  MSSQL, MailHog and backend readiness probes can report false negatives when
+  `docker` is a podman shim. Add `--continue-on-health-error` (or set
+  `CONTINUE_ON_HEALTH_ERROR=1`) to warn and continue instead of aborting; a
+  backend that is still starting is left running and the demo seed is skipped
+  if MSSQL was never confirmed ready.
 - **Port already in use** — `./e2e status` shows the API state. Stop the other
   process or override `API_PORT` (and optionally `API_BASE_URL`), `DB_PORT`,
   `MAILHOG_HTTP_PORT` and `MAILHOG_SMTP_PORT`.

@@ -1,6 +1,6 @@
 -- Reset local test state without dropping the database.
 -- Removes auth tokens and accounts created through @example.com test runs,
--- then db/seed.sql re-creates the dummy users/products/tickets.
+-- then db/seed.sql re-creates the demo users/products/tickets.
 SET QUOTED_IDENTIFIER ON;
 SET NOCOUNT ON;
 

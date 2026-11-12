@@ -47,7 +47,7 @@ backend: ## Start/restart the backend and apply the seed
 deps: ## Start MSSQL and MailHog only
 	@$(E2E) deps
 
-seed: ## Apply the idempotent dummy seed
+seed: ## Apply the idempotent demo seed
 	@$(E2E) seed
 
 sim: ## Boot/select the configured simulator or emulator

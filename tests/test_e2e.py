@@ -5,7 +5,9 @@ Run with:  python -m unittest discover -s tests -v
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import os
 import sys
 import tempfile
@@ -147,11 +149,11 @@ class TableTests(unittest.TestCase):
     def test_format_table(self) -> None:
         rendered = e2e.format_table(
             ["Name", "Email", "Owned tickets"],
-            [["John Doe", "john@doe.com", "4"]],
+            [["John Doe", "a@analog.local", "4"]],
             right_align={2},
         )
         self.assertIn("| Name", rendered)
-        self.assertIn("| john@doe.com", rendered)
+        self.assertIn("| a@analog.local", rendered)
         self.assertRegex(rendered, r"\|\s+4 \|")
         self.assertTrue(rendered.startswith("+"))
 
@@ -205,6 +207,25 @@ class ConfigTests(unittest.TestCase):
             self.assertIn("Server=localhost,14330", connection)
             self.assertIn("Initial Catalog=testdb", connection)
             self.assertIn("Password=pw", connection)
+
+    def test_continue_on_health_error_defaults_off(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "config.env").write_text("API_PORT=8080\n", encoding="utf-8")
+            self.assertFalse(e2e.Config(root).continue_on_health_error)
+
+    def test_continue_on_health_error_can_be_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "config.env").write_text(
+                "CONTINUE_ON_HEALTH_ERROR=1\n", encoding="utf-8"
+            )
+            self.assertTrue(e2e.Config(root).continue_on_health_error)
+            self.assertTrue(
+                e2e.Config(
+                    root, {"CONTINUE_ON_HEALTH_ERROR": "1"}
+                ).continue_on_health_error
+            )
 
 
 class AndroidAppUrlTests(unittest.TestCase):
@@ -275,6 +296,137 @@ class GlobalFlagTests(unittest.TestCase):
             self.assertEqual(args.command, "config")
             self.assertTrue(args.no_color)
             self.assertTrue(args.verbose)
+
+    def test_continue_on_health_error_is_a_global_flag(self) -> None:
+        self.assertEqual(
+            e2e.normalize_global_flags(["up", "--continue-on-health-error"]),
+            ["--continue-on-health-error", "up"],
+        )
+        args = e2e.build_parser().parse_args(
+            e2e.normalize_global_flags(["up", "--continue-on-health-error"])
+        )
+        self.assertTrue(args.continue_on_health_error)
+        self.assertEqual(
+            e2e.overrides_from_args(args),
+            {"CONTINUE_ON_HEALTH_ERROR": "1"},
+        )
+
+
+class HealthCheckTests(unittest.TestCase):
+    def _config(self, extra: str = "") -> "e2e.Config":
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        (root / "config.env").write_text("API_PORT=8080\n" + extra, encoding="utf-8")
+        return e2e.Config(root)
+
+    def _console(self) -> "e2e.Console":
+        return e2e.Console(color=False)
+
+    def test_mssql_probe_is_fatal_by_default(self) -> None:
+        database = e2e.Database(self._config(), mock.Mock(), self._console())
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(e2e.E2EException):
+                database.wait_ready(timeout=0)
+
+    def test_mssql_probe_warns_and_continues_when_enabled(self) -> None:
+        cfg = self._config("CONTINUE_ON_HEALTH_ERROR=1\n")
+        database = e2e.Database(cfg, mock.Mock(), self._console())
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertFalse(database.wait_ready(timeout=0))
+
+    def test_mailhog_probe_is_fatal_by_default(self) -> None:
+        mailhog = e2e.MailHog(self._config(), self._console())
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(e2e.E2EException):
+                mailhog.wait_ready(timeout=0)
+
+    def test_mailhog_probe_warns_and_continues_when_enabled(self) -> None:
+        cfg = self._config("CONTINUE_ON_HEALTH_ERROR=1\n")
+        mailhog = e2e.MailHog(cfg, self._console())
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertFalse(mailhog.wait_ready(timeout=0))
+
+    def _start_backend(self, cfg: "e2e.Config", expect_error: bool) -> mock.Mock:
+        backend = e2e.Backend(cfg, self._console())
+        process = mock.Mock()
+        process.pid = 4242
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(
+                mock.patch.object(e2e.Backend, "is_up", return_value=False)
+            )
+            stack.enter_context(
+                mock.patch.object(e2e.Backend, "port_in_use", return_value=False)
+            )
+            stack.enter_context(
+                mock.patch.object(
+                    e2e.Backend,
+                    "_build",
+                    return_value=cfg.root / "CoffeeCard.WebApi.dll",
+                )
+            )
+            stack.enter_context(
+                mock.patch.object(e2e.Backend, "wait_ready", return_value=False)
+            )
+            terminate = stack.enter_context(
+                mock.patch.object(e2e.Backend, "_terminate")
+            )
+            popen = stack.enter_context(mock.patch("e2e.subprocess.Popen"))
+            stack.enter_context(
+                mock.patch.object(e2e, "require", return_value="dotnet")
+            )
+            stack.enter_context(contextlib.redirect_stderr(io.StringIO()))
+            stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
+            popen.return_value = process
+            if expect_error:
+                with self.assertRaises(e2e.E2EException):
+                    backend.start()
+            else:
+                backend.start()
+        return terminate
+
+    def test_backend_probe_is_fatal_by_default(self) -> None:
+        terminate = self._start_backend(self._config(), expect_error=True)
+        terminate.assert_called_once_with(4242)
+
+    def test_backend_probe_continues_when_enabled(self) -> None:
+        cfg = self._config("CONTINUE_ON_HEALTH_ERROR=1\n")
+        terminate = self._start_backend(cfg, expect_error=False)
+        terminate.assert_not_called()
+        self.assertEqual(cfg.backend_pid.read_text(encoding="utf-8"), "4242")
+
+    def test_seed_runs_when_database_is_ready(self) -> None:
+        database = mock.Mock()
+        e2e._seed_when_ready(self._console(), database, True)
+        database.seed.assert_called_once_with()
+
+    def test_seed_is_skipped_when_readiness_was_not_confirmed(self) -> None:
+        database = mock.Mock()
+        with contextlib.redirect_stderr(io.StringIO()) as stderr:
+            e2e._seed_when_ready(self._console(), database, False)
+        database.seed.assert_not_called()
+        self.assertIn("Skipping the demo seed", stderr.getvalue())
+
+    def test_up_continues_when_mssql_probe_times_out(self) -> None:
+        cfg = self._config("CONTINUE_ON_HEALTH_ERROR=1\n")
+        con = self._console()
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(mock.patch.object(e2e, "cmd_check"))
+            docker_cls = stack.enter_context(mock.patch.object(e2e, "Docker"))
+            database_cls = stack.enter_context(mock.patch.object(e2e, "Database"))
+            mailhog_cls = stack.enter_context(mock.patch.object(e2e, "MailHog"))
+            backend_cls = stack.enter_context(mock.patch.object(e2e, "Backend"))
+            stack.enter_context(mock.patch.object(e2e, "cmd_status"))
+            stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
+            stack.enter_context(contextlib.redirect_stderr(io.StringIO()))
+            database = database_cls.return_value
+            database.wait_ready.return_value = False
+            mailhog_cls.return_value.wait_ready.return_value = True
+
+            self.assertEqual(e2e.cmd_up(cfg, con, backend_only=True), 0)
+            docker_cls.return_value.up.assert_called_once_with()
+            backend_cls.return_value.start.assert_called_once_with()
+            database.seed.assert_not_called()
 
 
 if __name__ == "__main__":

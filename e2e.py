@@ -311,6 +311,10 @@ DEFAULTS: Dict[str, str] = {
     "APP_ID": "dk.analogio.analog.dev",
     "APP_FLAVOR": "development",
     "APP_SCHEME": "analogcoffeecard-dev",
+    # Health checks
+    # 1 = warn and continue when a readiness probe fails (for example when
+    # Docker is emulated by podman and probes report false negatives).
+    "CONTINUE_ON_HEALTH_ERROR": "0",
 }
 
 ENV_LINE_RE = re.compile(r"^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$")
@@ -461,6 +465,9 @@ class Config:
         self.app_id = self._str("APP_ID")
         self.app_flavor = self._str("APP_FLAVOR")
         self.app_scheme = self._str("APP_SCHEME")
+        self.continue_on_health_error = _as_bool(
+            self._str("CONTINUE_ON_HEALTH_ERROR")
+        )
 
         self.compose_file = root / "docker-compose.yml"
         self.backend_project = self.core_dir / "coffeecard" / "CoffeeCard.WebApi"
@@ -524,6 +531,10 @@ class Config:
             ("mailhog", self.mailhog_url),
             ("database", f"localhost:{self.db_port}/{self.db_name}"),
             ("db password", password),
+            (
+                "health check",
+                "continue on error" if self.continue_on_health_error else "stop",
+            ),
             ("app id", self.app_id),
             ("flavor", self.app_flavor),
             ("compose", str(self.compose_file)),
@@ -716,7 +727,7 @@ class Database:
             *cmd, input=input, check=check, capture=capture, timeout=timeout
         )
 
-    def wait_ready(self, timeout: int = 120) -> None:
+    def wait_ready(self, timeout: int = 120) -> bool:
         deadline = time.time() + timeout
         while time.time() < deadline:
             found = self._sqlcmd or self._detect_sqlcmd()
@@ -724,8 +735,15 @@ class Database:
                 self._sqlcmd = found
                 proc = self.sqlcmd("-l", "5", "-Q", "SELECT 1", check=False)
                 if proc.returncode == 0:
-                    return
+                    return True
             time.sleep(1)
+        if self.cfg.continue_on_health_error:
+            self.con.warn(
+                f"MSSQL did not become ready within {timeout}s; continuing "
+                "anyway (--continue-on-health-error).\n"
+                "  Try: docker compose logs mssql"
+            )
+            return False
         raise E2EException(
             "MSSQL did not become ready.\n"
             "  Try: docker compose logs mssql"
@@ -762,16 +780,19 @@ class Database:
         counts = self.query(
             "SET NOCOUNT ON; "
             "SELECT 'programmes', COUNT(*) FROM dbo.Programmes "
-            "UNION ALL SELECT 'users', COUNT(*) FROM dbo.Users "
+            "UNION ALL SELECT 'seed users', COUNT(*) FROM dbo.Users "
+            "WHERE Email LIKE '_@analog.local' "
             "UNION ALL SELECT 'products', COUNT(*) FROM dbo.Products "
-            "UNION ALL SELECT 'tickets', COUNT(*) FROM dbo.Tickets"
+            "UNION ALL SELECT 'tickets', COUNT(*) FROM dbo.Tickets "
+            "UNION ALL SELECT 'cups today', COUNT(*) FROM dbo.Tickets "
+            "WHERE Status = 1 AND CAST(DateUsed AS DATE) = CAST(GETUTCDATE() AS DATE)"
         )
         for row in counts:
             if len(row) >= 2:
                 self.con.plain(f"    {row[0]:<12} {row[1]}")
         self.con.ok(
-            "Seed applied (john@doe.com: 4 unused; "
-            "many.tickets@analog.local: 70 unused, 120 used, 10 refunded)."
+            "Seed applied (accounts a@analog.local..z@analog.local; "
+            "a@ is the busy account)."
         )
 
     def reset(self) -> None:
@@ -856,12 +877,18 @@ class MailHog:
     def ok(self) -> bool:
         return http_ok(self._url("/api/v2/messages"), timeout=2)
 
-    def wait_ready(self, timeout: int = 60) -> None:
+    def wait_ready(self, timeout: int = 60) -> bool:
         deadline = time.time() + timeout
         while time.time() < deadline:
             if self.ok():
-                return
+                return True
             time.sleep(1)
+        if self.cfg.continue_on_health_error:
+            self.con.warn(
+                f"MailHog did not become ready at {self.cfg.mailhog_url} within "
+                f"{timeout}s; continuing anyway (--continue-on-health-error)."
+            )
+            return False
         raise E2EException(f"MailHog did not become ready at {self.cfg.mailhog_url}.")
 
     def count(self) -> int:
@@ -1149,6 +1176,14 @@ class Backend:
         self.cfg.backend_pid.write_text(str(process.pid), encoding="utf-8")
 
         if not self.wait_ready(90, pid=process.pid):
+            if self.cfg.continue_on_health_error:
+                self.con.warn(
+                    f"Backend did not become healthy at {self.cfg.api_base_url} "
+                    "within 90s; continuing anyway (--continue-on-health-error).\n"
+                    f"  The process is still running (pid {self.read_pid()}). "
+                    f"Log: {self.cfg.backend_log}"
+                )
+                return
             detail = tail_path(self.cfg.backend_log, 60)
             self._terminate(process.pid)
             raise E2EException(
@@ -2014,6 +2049,17 @@ def cmd_setup(cfg: Config, con: Console, clone: bool = False) -> int:
     return cmd_check(cfg, con, backend_only=False)
 
 
+def _seed_when_ready(con: Console, database: Database, db_ready: bool) -> None:
+    """Seed only when the MSSQL probe confirmed the database is reachable."""
+    if db_ready:
+        database.seed()
+        return
+    con.warn(
+        "Skipping the demo seed because MSSQL readiness was not confirmed.\n"
+        "  Run `e2e seed --continue-on-health-error` once MSSQL is up."
+    )
+
+
 def cmd_up(
     cfg: Config,
     con: Console,
@@ -2029,14 +2075,15 @@ def cmd_up(
 
     docker.up()
     con.log("Waiting for MSSQL...")
-    database.wait_ready(120)
-    con.ok(f"MSSQL ready (localhost:{cfg.db_port}, user {cfg.db_user})")
+    db_ready = database.wait_ready(120)
+    if db_ready:
+        con.ok(f"MSSQL ready (localhost:{cfg.db_port}, user {cfg.db_user})")
     con.log("Waiting for MailHog...")
-    mailhog.wait_ready(60)
-    con.ok(f"MailHog ready ({cfg.mailhog_url})")
+    if mailhog.wait_ready(60):
+        con.ok(f"MailHog ready ({cfg.mailhog_url})")
 
     backend.start()
-    database.seed()
+    _seed_when_ready(con, database, db_ready)
 
     if not skip_device:
         Devices(cfg, con).ensure()
@@ -2081,10 +2128,10 @@ def cmd_deps(cfg: Config, con: Console) -> int:
     mailhog = MailHog(cfg, con)
     docker.up()
     con.log("Waiting for MSSQL...")
-    database.wait_ready(120)
-    con.ok(f"MSSQL ready (localhost:{cfg.db_port}, user {cfg.db_user})")
-    mailhog.wait_ready(60)
-    con.ok(f"MailHog ready ({cfg.mailhog_url})")
+    if database.wait_ready(120):
+        con.ok(f"MSSQL ready (localhost:{cfg.db_port}, user {cfg.db_user})")
+    if mailhog.wait_ready(60):
+        con.ok(f"MailHog ready ({cfg.mailhog_url})")
     return 0
 
 
@@ -2100,13 +2147,13 @@ def cmd_backend(cfg: Config, con: Console, action: str) -> int:
     mailhog = MailHog(cfg, con)
     docker.up()
     con.log("Waiting for MSSQL...")
-    database.wait_ready(120)
+    db_ready = database.wait_ready(120)
     mailhog.wait_ready(60)
     backend = Backend(cfg, con)
     if action == "restart":
         backend.stop()
     backend.start()
-    database.seed()
+    _seed_when_ready(con, database, db_ready)
     return 0
 
 
@@ -2367,15 +2414,38 @@ def add_common(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def add_health_option(parser: argparse.ArgumentParser) -> None:
+    """Advertise the global health flag in per-command help."""
+    parser.add_argument(
+        "--continue-on-health-error",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help="warn and continue when a readiness probe fails",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="e2e",
         description="Local E2E environment for analog-core + mobile_app.",
-        epilog="Configuration: config.env (override in config.local.env or the environment).",
+        epilog=(
+            "Configuration: config.env (override in config.local.env or the "
+            "environment).\n"
+            "Global flags (before or after the command): --no-color, --verbose, "
+            "--continue-on-health-error."
+        ),
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {VERSION}")
     parser.add_argument("--verbose", action="store_true", help="print commands")
     parser.add_argument("--no-color", action="store_true", help="disable ANSI colors")
+    parser.add_argument(
+        "--continue-on-health-error",
+        action="store_true",
+        help=(
+            "warn and continue when MSSQL/MailHog/backend readiness probes fail "
+            "(useful when Docker is emulated by podman)"
+        ),
+    )
 
     sub = parser.add_subparsers(dest="command", metavar="command")
 
@@ -2389,23 +2459,30 @@ def build_parser() -> argparse.ArgumentParser:
     up = sub.add_parser("up", help="start Docker, backend, seed data and a device")
     up.add_argument("--backend-only", action="store_true")
     add_common(up)
+    add_health_option(up)
 
     dev = sub.add_parser("dev", help="`up`, then run the app in the foreground")
     dev.add_argument("--backend-only", action="store_true")
     add_common(dev)
+    add_health_option(dev)
 
     app = sub.add_parser("app", help="run the app against the local backend")
     add_common(app)
 
     backend = sub.add_parser("backend", help="start/stop/restart the backend")
     backend.add_argument("action", choices=["start", "stop", "restart"])
+    add_health_option(backend)
 
-    sub.add_parser("deps", help="start MSSQL and MailHog only")
+    deps = sub.add_parser("deps", help="start MSSQL and MailHog only")
+    add_health_option(deps)
 
-    seed = sub.add_parser("seed", help="apply the idempotent dummy seed")
-    _ = seed
+    seed = sub.add_parser("seed", help="apply the idempotent demo seed")
+    add_health_option(seed)
 
-    sub.add_parser("reset", help="remove test accounts, re-seed and clear MailHog")
+    reset = sub.add_parser(
+        "reset", help="remove test accounts, re-seed and clear MailHog"
+    )
+    add_health_option(reset)
     sub.add_parser("down", help="stop the backend and Docker services")
     sub.add_parser("nuke", help="remove containers, volumes and runtime state")
 
@@ -2438,7 +2515,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-GLOBAL_FLAGS = ("--no-color", "--verbose")
+GLOBAL_FLAGS = ("--no-color", "--verbose", "--continue-on-health-error")
 
 
 def normalize_global_flags(argv: Sequence[str]) -> List[str]:
@@ -2458,6 +2535,20 @@ def normalize_global_flags(argv: Sequence[str]) -> List[str]:
     return flags + rest
 
 
+def overrides_from_args(args: argparse.Namespace) -> Dict[str, str]:
+    """Turn CLI flags into Config overrides."""
+    overrides: Dict[str, str] = {}
+    if getattr(args, "platform", None):
+        overrides["PLATFORM"] = args.platform
+    if getattr(args, "device", None):
+        overrides["DEVICE"] = args.device
+    if getattr(args, "no_device", False):
+        overrides["NO_DEVICE"] = "1"
+    if getattr(args, "continue_on_health_error", False):
+        overrides["CONTINUE_ON_HEALTH_ERROR"] = "1"
+    return overrides
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     global VERBOSE
     parser = build_parser()
@@ -2472,13 +2563,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         )
         return 1
 
-    overrides: Dict[str, str] = {}
-    if getattr(args, "platform", None):
-        overrides["PLATFORM"] = args.platform
-    if getattr(args, "device", None):
-        overrides["DEVICE"] = args.device
-    if getattr(args, "no_device", False):
-        overrides["NO_DEVICE"] = "1"
+    overrides = overrides_from_args(args)
 
     try:
         cfg = Config(ROOT, overrides)
