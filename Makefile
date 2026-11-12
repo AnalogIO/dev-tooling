@@ -240,10 +240,25 @@ open-link:
 		adb -s "$$SERIAL" shell am start -a android.intent.action.VIEW -d "$$LINK"; \
 	fi
 
-list-users: deps
+list-users:
 	@SQLCMD=$$($(COMPOSE_CMD) exec -T mssql sh -c 'command -v /opt/mssql-tools18/bin/sqlcmd || command -v /opt/mssql-tools/bin/sqlcmd' 2>/dev/null); \
-	[ -n "$$SQLCMD" ] || { echo "error: sqlcmd not found in the MSSQL container."; exit 1; }; \
-	$(COMPOSE_CMD) exec -T mssql "$$SQLCMD" -C -S localhost -U "$(DB_USER)" -P "$(DB_PASSWORD)" -d "$(DB_NAME)" -W -w 120 -s "|" -Q "SET NOCOUNT ON; SELECT u.Name, u.Email, COUNT(t.Id) AS [Unused tickets] FROM dbo.Users u LEFT JOIN dbo.Tickets t ON t.[Owner_Id] = u.Id AND t.Status = 0 GROUP BY u.Id, u.Name, u.Email ORDER BY u.Name"
+	[ -n "$$SQLCMD" ] || { echo "error: MSSQL is not running; run 'make backend' first."; exit 1; }; \
+	DATA=$$($(COMPOSE_CMD) exec -T mssql "$$SQLCMD" -C -S localhost -U "$(DB_USER)" -P "$(DB_PASSWORD)" -d "$(DB_NAME)" -W -h -1 -s "|" -Q "SET NOCOUNT ON; SELECT u.Name, u.Email, COUNT(t.Id) FROM dbo.Users u LEFT JOIN dbo.Tickets t ON t.[Owner_Id] = u.Id AND t.Status = 0 GROUP BY u.Id, u.Name, u.Email ORDER BY u.Name") || { \
+		echo "error: could not read users; run 'make backend' first."; exit 1; \
+	}; \
+	printf '%s\n' "$$DATA" | awk -F'|' 'NF { \
+		name[++n] = $$1; email[n] = $$2; count[n] = $$3; \
+		if (length($$1) > wn) wn = length($$1); \
+		if (length($$2) > we) we = length($$2); \
+	} END { \
+		if (wn < 4) wn = 4; \
+		if (we < 5) we = 5; \
+		print ""; \
+		printf "%-*s  %-*s  %s\n", wn, "Name", we, "Email", "Unused"; \
+		printf "%-*s  %-*s  %s\n", wn, "----", we, "-----", "------"; \
+		for (i = 1; i <= n; i++) \
+			printf "%-*s  %-*s  %s\n", wn, name[i], we, email[i], count[i]; \
+	}'
 
 logs:
 	@test -f "$(LOG)" || { echo "error: no backend log yet; run 'make backend' first."; exit 1; }
