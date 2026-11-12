@@ -14,7 +14,7 @@ interface.
 | Tool | Notes |
 | --- | --- |
 | GNU make | Any recent version. |
-| Docker or Podman | Compose v2 or `podman-compose`. The daemon/machine must be running. |
+| Docker or Podman | Docker Compose v2, or `podman-compose` 1.6+ (needs `up --wait`). The daemon/machine must be running. |
 | .NET SDK 10 | `dotnet --version`. |
 | Flutter 3.47+ | `flutter --version`. |
 | iOS simulator | macOS only: Xcode with an iOS runtime. |
@@ -110,6 +110,9 @@ available, otherwise the standalone `podman-compose`. It falls back to
 make backend COMPOSE="podman-compose"
 ```
 
+`deps` uses `compose up --wait`, so `podman-compose` must be 1.6 or newer (or
+`podman compose` must be backed by Docker Compose v2).
+
 Rootless Podman needs subordinate UID/GID ranges (`/etc/subuid`, `/etc/subgid`)
 for the MSSQL container. The published ports are all above 1024, so no extra
 privileges are needed. To wipe the database volume:
@@ -130,7 +133,9 @@ shell rather than `cmd.exe`.
 ## How it works
 
 - **Containers:** `docker-compose.yml` publishes MSSQL on `1433` and MailHog on
-  `1025` (SMTP) and `8025` (UI), all bound to localhost.
+  `1025` (SMTP) and `8025` (UI), all bound to localhost. Both define a
+  `healthcheck`; `make deps` runs `compose up -d --wait`, so the API starts
+  only after MSSQL and MailHog report healthy.
 - **API:** `make backend` runs `dotnet build`, then starts the built DLL
   detached with `ASPNETCORE_ENVIRONMENT=Development`, a localhost connection
   string, and SMTP pointed at MailHog. It becomes ready when

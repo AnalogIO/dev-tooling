@@ -90,26 +90,11 @@ help:
 	@echo "  API      http://localhost:$(API_PORT)"
 	@echo "  MailHog  http://127.0.0.1:$(MAILHOG_HTTP_PORT)"
 
-# Start the two containers and wait until they are actually usable.
+# The Compose healthchecks decide when the containers are usable.
 deps:
 	@echo "Starting MSSQL and MailHog with $(COMPOSE)..."
-	@$(COMPOSE_CMD) up -d mssql mailhog
-	@printf "Waiting for MSSQL"
-	@i=0; while [ $$i -lt 120 ]; do \
-		if $(COMPOSE_CMD) exec -T mssql sh -c 'SQLCMD=$$(command -v /opt/mssql-tools18/bin/sqlcmd || command -v /opt/mssql-tools/bin/sqlcmd); $$SQLCMD -C -S localhost -U sa -P "$$MSSQL_SA_PASSWORD" -Q "SELECT 1" >/dev/null 2>&1'; then \
-			echo " ready"; exit 0; \
-		fi; \
-		printf "."; i=$$((i+1)); sleep 1; \
-	done; \
-	echo ""; echo "error: MSSQL did not become ready"; exit 1
-	@printf "Waiting for MailHog"
-	@i=0; while [ $$i -lt 60 ]; do \
-		if curl -fsS "http://127.0.0.1:$(MAILHOG_HTTP_PORT)/api/v2/messages" >/dev/null 2>&1; then \
-			echo " ready"; exit 0; \
-		fi; \
-		printf "."; i=$$((i+1)); sleep 1; \
-	done; \
-	echo ""; echo "error: MailHog did not become ready"; exit 1
+	@$(COMPOSE_CMD) up -d --wait --wait-timeout 180 mssql mailhog
+	@echo "MSSQL and MailHog ready."
 
 # Dependencies + build + run + seed, in one command.
 backend: deps
