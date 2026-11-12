@@ -1,6 +1,7 @@
-# Infrastructure for the local E2E environment. The backend itself runs on the
-# host so `dotnet build` + restart stays fast. Values are supplied by e2e.py
-# from config.env / the environment.
+# Infrastructure for local development. The backend runs on the host so that
+# `dotnet build` + restart stays fast. The Makefile supplies these values from
+# its own variables (DB_PORT, DB_PASSWORD, MAILHOG_*); the defaults below keep
+# `docker compose` / `podman compose` usable on their own.
 # The Compose project name is the directory name (override with
 # COMPOSE_PROJECT_NAME if you keep multiple checkouts on one machine).
 services:
